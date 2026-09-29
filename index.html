@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FEEDER SSME LITE V1</title>
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;background:#111;color:#eee;
+ font-family:Arial,sans-serif;font-size:13px;
+}
+header{
+ padding:10px;background:#1d1d1d;
+ text-align:center;font-weight:bold;font-size:18px;
+}
+.wrap{padding:8px;max-width:600px;margin:auto}
+.box{
+ background:#1b1b1b;border:1px solid #333;
+ border-radius:8px;padding:9px;margin-bottom:8px;
+}
+h3{margin:0 0 7px;font-size:14px}
+button,select,input[type=file]{
+ width:100%;min-height:38px;margin:3px 0;
+ background:#292929;color:#fff;border:1px solid #555;
+ border-radius:6px;padding:7px;
+}
+button:active{background:#444}
+.row{display:flex;gap:6px}
+.row>*{flex:1}
+label{display:block;margin:6px 0 2px;color:#bbb}
+input[type=range]{width:100%}
+.val{text-align:right;color:#7ddcff}
+.meters{display:flex;gap:6px}
+.meterbox{flex:1}
+.meter{
+ height:18px;background:#080808;
+ border:1px solid #444;border-radius:3px;
+ display:flex;gap:1px;padding:2px;
+}
+.seg{flex:1;background:#222}
+.seg.on.green{background:#39b54a}
+.seg.on.yellow{background:#e4c62b}
+.seg.on.red{background:#e53935}
+.status{
+ text-align:center;padding:7px;
+ margin-top:6px;border-radius:5px;
+ background:#222;color:#aaa;
+}
+.greenText{color:#45d45a}
+.yellowText{color:#e5cb38}
+.redText{color:#ff4545}
+.small{font-size:11px;color:#888}
+.stems button{font-size:11px}
+</style>
+</head>
+
+<body>
+<header>FEEDER SSME LITE V1</header>
+
+<div class="wrap">
+
+<div class="box">
+<h3>INPUT / AUDIO</h3>
+<input id="file" type="file" accept="audio/*">
+<div class="row">
+<button id="play">▶ PLAY</button>
+<button id="pause">Ⅱ PAUSE</button>
+<button id="stop">■ STOP</button>
+</div>
+<select id="mode">
+<option value="stereo">STEREO L/R</option>
+<option value="mono">MONO L+R</option>
+</select>
+</div>
+
+<div class="box">
+<h3>INPUT LEVEL</h3>
+<div class="meters">
+ <div class="meterbox">
+  LEFT
+  <div id="mL" class="meter"></div>
+ </div>
+ <div class="meterbox">
+  RIGHT
+  <div id="mR" class="meter"></div>
+ </div>
+ <div class="meterbox">
+  OUTPUT
+  <div id="mO" class="meter"></div>
+ </div>
+</div>
+<div id="status" class="status">NO SIGNAL</div>
+</div>
+
+<div class="box">
+<h3>CHANNEL</h3>
+
+<label>PRE-AMP / GAIN <span id="preV" class="val">0 dB</span></label>
+<input id="pre" type="range" min="-24" max="12" step=".1" value="0">
+
+<label>PAN <span id="panV" class="val">CENTER</span></label>
+<input id="pan" type="range" min="-1" max="1" step=".01" value="0">
+
+<label>FADER / MASTER <span id="fadV" class="val">0 dB</span></label>
+<input id="fader" type="range" min="-36" max="6" step=".1" value="0">
+
+<div class="row">
+<button id="link">LINK L/R: OFF</button>
+<button id="auto">AUTO GAIN</button>
+</div>
+</div>
+
+<div class="box">
+<h3>DIRECT SOUND SETTING</h3>
+
+<label>EQ</label>
+<button id="eqBtn">EQ: ON</button>
+
+<label>REVERB <span id="revV" class="val">0%</span></label>
+<input id="rev" type="range" min="0" max="35" value="0">
+
+<label>DELAY <span id="delV" class="val">0%</span></label>
+<input id="del" type="range" min="0" max="25" value="0">
+
+<div class="row">
+<button id="iirBtn">IIR: ON</button>
+<button id="ifrBtn">IFR: ON</button>
+</div>
+
+<div class="row">
+<button id="nrBtn">NR: ON</button>
+<button id="aflBtn">AFL: OFF</button>
+</div>
+
+<div class="small">
+NR = high-pass + low-pass + real-time noise gate.
+</div>
+</div>
+
+<div class="box">
+<h3>STEM / MATRIX OUTPUT</h3>
+<div class="row stems">
+<button data-stem="L">LEFT</button>
+<button data-stem="R">RIGHT</button>
+</div>
+<div class="row stems">
+<button data-stem="M">CENTER / MID</button>
+<button data-stem="S">SIDE</button>
+</div>
+<div id="stemStatus" class="status">STEREO L/R</div>
+</div>
+
+<div class="box">
+<h3>EXPORT</h3>
+<button id="wav">EXPORT WAV</button>
+<div class="small">
+WAV export menggunakan pemrosesan dasar PRE-AMP, PAN dan FADER.
+</div>
+</div>
+
+</div>
+
+<script>
+"use strict";
+
+const $=id=>document.getElementById(id);
+
+let ctx=null;
+let audio=null;
+let src=null;
+let nodes={};
+let raf=0;
+
+let nrOn=true;
+let eqOn=true;
+let iirOn=true;
+let ifrOn=true;
+let aflOn=false;
+let linked=false;
+
+let currentStem="LR";
+
+function db(v){
+ return Math.pow(10,v/20);
+}
+
+function createAudio(){
+
+ if(ctx)return;
+
+ ctx=new (window.AudioContext||window.webkitAudioContext)();
+
+ nodes.input=ctx.createGain();
+
+ /* REAL LIGHTWEIGHT NOISE REDUCTION */
+ nodes.nrHP=ctx.createBiquadFilter();
+ nodes.nrHP.type="highpass";
+ nodes.nrHP.frequency.value=45;
+ nodes.nrHP.Q.value=.7;
+
+ nodes.nrLP=ctx.createBiquadFilter();
+ nodes.nrLP.type="lowpass";
+ nodes.nrLP.frequency.value=15500;
+ nodes.nrLP.Q.value=.7;
+
+ nodes.nrGain=ctx.createGain();
+ nodes.nrGain.gain.value=1;
+
+ nodes.nrAnalyser=ctx.createAnalyser();
+ nodes.nrAnalyser.fftSize=256;
+ nodes.nrAnalyser.smoothingTimeConstant=.75;
+
+ nodes.pre=ctx.createGain();
+
+ nodes.pan=ctx.createStereoPanner();
+
+ nodes.eqLow=ctx.createBiquadFilter();
+ nodes.eqLow.type="lowshelf";
+ nodes.eqLow.frequency.value=100;
+ nodes.eqLow.gain.value=1.5;
+
+ nodes.eqMid=ctx.createBiquadFilter();
+ nodes.eqMid.type="peaking";
+ nodes.eqMid.frequency.value=1200;
+ nodes.eqMid.Q.value=.8;
+ nodes.eqMid.gain.value=0;
+
+ nodes.eqHigh=ctx.createBiquadFilter();
+ nodes.eqHigh.type="highshelf";
+ nodes.eqHigh.frequency.value=7000;
+ nodes.eqHigh.gain.value=1.5;
+
+ nodes.iir=ctx.createBiquadFilter();
+ nodes.iir.type="notch";
+ nodes.iir.frequency.value=50;
+ nodes.iir.Q.value=8;
+
+ nodes.ifr=ctx.createBiquadFilter();
+ nodes.ifr.type="highshelf";
+ nodes.ifr.frequency.value=9000;
+ nodes.ifr.gain.value=0;
+
+ nodes.fader=ctx.createGain();
+
+ nodes.delay=ctx.createDelay(.5);
+ nodes.delayGain=ctx.createGain();
+ nodes.delayGain.gain.value=0;
+
+ nodes.rev=ctx.createDelay(.2);
+ nodes.revGain=ctx.createGain();
+ nodes.revGain.gain.value=0;
+
+ nodes.master=ctx.createGain();
+
+ nodes.split=ctx.createChannelSplitter(2);
+ nodes.aL=ctx.createAnalyser();
+ nodes.aR=ctx.createAnalyser();
+ nodes.aO=ctx.createAnalyser();
+
+ nodes.aL.fftSize=256;
+ nodes.aR.fftSize=256;
+ nodes.aO.fftSize=256;
+
+ /*
+   MAIN AUDIO GRAPH
+
+   INPUT
+    ↓
+   NR HP/LP
+    ↓
+   NR GATE
+    ↓
+   PRE
+    ↓
+   PAN
+    ↓
+   EQ
+    ↓
+   IIR
+    ↓
+   IFR
+    ↓
+   FADER
+    ↓
+   MASTER
+    ↓
+   OUTPUT
+ */
+
+ nodes.input
+  .connect(nodes.nrHP)
+  .connect(nodes.nrLP)
+  .connect(nodes.nrGain)
+  .connect(nodes.nrAnalyser)
+  .connect(nodes.pre)
+  .connect(nodes.pan)
+  .connect(nodes.eqLow)
+  .connect(nodes.eqMid)
+  .connect(nodes.eqHigh)
+  .connect(nodes.iir)
+  .connect(nodes.ifr)
+  .connect(nodes.fader)
+  .connect(nodes.master);
+
+ /* DELAY */
+ nodes.ifr.connect(nodes.delay);
+ nodes.delay.connect(nodes.delayGain);
+ nodes.delayGain.connect(nodes.master);
+
+ /* REVERB-LIKE SHORT REFLECTION */
+ nodes.ifr.connect(nodes.rev);
+ nodes.rev.connect(nodes.revGain);
+ nodes.revGain.connect(nodes.master);
+
+ nodes.master.connect(nodes.split);
+ nodes.master.connect(nodes.aO);
+ nodes.master.connect(ctx.destination);
+
+ nodes.split.connect(nodes.aL,0);
+ nodes.split.connect(nodes.aR,1);
+
+ updateGraph();
+}
+
+function updateGraph(){
+
+ if(!ctx)return;
+
+ nodes.nrHP.frequency.value=nrOn?45:10;
+ nodes.nrLP.frequency.value=nrOn?15500:20000;
+
+ nodes.nrGain.gain.value=nrOn?nodes.nrGain.gain.value:1;
+
+ nodes.eqLow.gain.value=eqOn?1.5:0;
+ nodes.eqHigh.gain.value=eqOn?1.5:0;
+
+ nodes.iir.frequency.value=iirOn?50:20;
+ nodes.iir.Q.value=iirOn?8:.1;
+
+ nodes.ifr.frequency.value=ifrOn?9000:20000;
+ nodes.ifr.gain.value=ifrOn?0:0;
+
+ nodes.delayGain.gain.value=parseFloat($("del").value)/100*.35;
+ nodes.revGain.gain.value=parseFloat($("rev").value)/100*.30;
+
+ $("nrBtn").textContent="NR: "+(nrOn?"ON":"OFF");
+ $("eqBtn").textContent="EQ: "+(eqOn?"ON":"OFF");
+ $("iirBtn").textContent="IIR: "+(iirOn?"ON":"OFF");
+ $("ifrBtn").textContent="IFR: "+(ifrOn?"ON":"OFF");
+ $("aflBtn").textContent="AFL: "+(aflOn?"ON":"OFF");
+}
+
+function connectFile(){
+
+ if(!audio||!ctx||src)return;
+
+ src=ctx.createMediaElementSource(audio);
+ src.connect(nodes.input);
+
+ audio.onended=()=>{
+  $("status").textContent="SELESAI — tekan PLAY";
+ };
+}
+
+$("file").onchange=()=>{
+ let f=$("file").files[0];
+ if(!f)return;
+
+ if(audio){
+  audio.pause();
+  audio.src="";
+ }
+
+ audio=new Audio();
+ audio.preload="auto";
+ audio.playsInline=true;
+ audio.src=URL.createObjectURL(f);
+
+ src=null;
+
+ $("status").textContent="FILE SIAP — tekan PLAY";
+};
+
+async function playAudio(){
+
+ if(!audio){
+  $("status").textContent="PILIH FILE AUDIO";
+  return;
+ }
+
+ try{
+
+  createAudio();
+  connectFile();
+
+  let p=audio.play();
+
+  if(ctx.state!=="running"){
+   await ctx.resume();
+  }
+
+  await p;
+
+  $("status").textContent="PLAYING";
+
+  if(!raf)meter();
+
+ }catch(e){
+
+  $("status").textContent="GAGAL PLAY";
+
+ }
+
+}
+
+$("play").onclick=playAudio;
+
+$("pause").onclick=()=>{
+ if(audio){
+  audio.pause();
+  $("status").textContent="PAUSED";
+ }
+};
+
+$("stop").onclick=()=>{
+ if(audio){
+  audio.pause();
+  audio.currentTime=0;
+  $("status").textContent="STOPPED";
+ }
+};
+
+$("pre").oninput=()=>{
+ let v=parseFloat($("pre").value);
+ $("preV").textContent=v.toFixed(1)+" dB";
+
+ if(nodes.pre){
+  nodes.pre.gain.value=db(v);
+ }
+};
+
+$("pan").oninput=()=>{
+ let v=parseFloat($("pan").value);
+
+ $("panV").textContent=
+  v<-.01?"LEFT":
+  v>.01?"RIGHT":"CENTER";
+
+ if(nodes.pan)nodes.pan.pan.value=v;
+};
+
+$("fader").oninput=()=>{
+ let v=parseFloat($("fader").value);
+ $("fadV").textContent=v.toFixed(1)+" dB";
+
+ if(nodes.fader){
+  nodes.fader.gain.value=db(v);
+ }
+};
+
+$("rev").oninput=()=>{
+ $("revV").textContent=$("rev").value+"%";
+ updateGraph();
+};
+
+$("del").oninput=()=>{
+ $("delV").textContent=$("del").value+"%";
+ updateGraph();
+};
+
+$("link").onclick=()=>{
+ linked=!linked;
+ $("link").textContent="LINK L/R: "+(linked?"ON":"OFF");
+};
+
+$("auto").onclick=()=>{
+
+ if(!nodes.master)return;
+
+ let g=nodes.master.gain.value;
+
+ if(g<1)g*=1.15;
+ else g=1;
+
+ nodes.master.gain.setTargetAtTime(
+  Math.min(g,1.5),
+  ctx.currentTime,
+  .05
+ );
+
+ $("status").textContent="AUTO GAIN AKTIF";
+};
+
+$("eqBtn").onclick=()=>{
+ eqOn=!eqOn;
+ updateGraph();
+};
+
+$("iirBtn").onclick=()=>{
+ iirOn=!iirOn;
+ updateGraph();
+};
+
+$("ifrBtn").onclick=()=>{
+ ifrOn=!ifrOn;
+ updateGraph();
+};
+
+$("nrBtn").onclick=()=>{
+ nrOn=!nrOn;
+
+ if(nodes.nrGain){
+  nodes.nrGain.gain.setTargetAtTime(
+   1,
+   ctx.currentTime,
+   .01
+  );
+ }
+
+ updateGraph();
+};
+
+$("aflBtn").onclick=()=>{
+ aflOn=!aflOn;
+ updateGraph();
+};
+
+/* REAL-TIME LIGHTWEIGHT NOISE GATE */
+
+let gateGain=1;
+
+function noiseGate(){
+
+ if(!ctx||!nodes.nrAnalyser||!nrOn){
+  gateGain=1;
+  if(nodes.nrGain)
+   nodes.nrGain.gain.setTargetAtTime(
+    1,ctx.currentTime,.02
+   );
+  return;
+ }
+
+ let data=new Uint8Array(
+  nodes.nrAnalyser.fftSize
+ );
+
+ nodes.nrAnalyser.getByteTimeDomainData(data);
+
+ let sum=0;
+
+ for(let i=0;i<data.length;i++){
+
+  let x=(data[i]-128)/128;
+  sum+=x*x;
+
+ }
+
+ let rms=Math.sqrt(sum/data.length);
+ let level=20*Math.log10(Math.max(rms,.00001));
+
+ /*
+   NOISE FLOOR ≈ -48 dB
+
+   below -50 dB:
+   strong attenuation
+
+   -50 to -38:
+   gradual opening
+
+   above -38:
+   full signal
+ */
+
+ let target=1;
+
+ if(level<-50){
+  target=.05;
+ }else if(level<-38){
+  target=.05+
+   (level+50)/12*.95;
+ }else{
+  target=1;
+ }
+
+ /*
+   Smooth attack/release.
+   This prevents clicking/pumping.
+ */
+
+ let coeff=target>gateGain?.18:.035;
+
+ gateGain+=(target-gateGain)*coeff;
+
+ nodes.nrGain.gain.setTargetAtTime(
+  gateGain,
+  ctx.currentTime,
+  .025
+ );
+}
+
+function makeMeter(id){
+
+ let e=$(id);
+ e.innerHTML="";
+
+ for(let i=0;i<24;i++){
+
+  let s=document.createElement("span");
+  s.className="seg";
+  e.appendChild(s);
+
+ }
+
+}
+
+makeMeter("mL");
+makeMeter("mR");
+makeMeter("mO");
+
+function meterValue(analyser,id){
+
+ let data=new Uint8Array(analyser.fftSize);
+
+ analyser.getByteTimeDomainData(data);
+
+ let sum=0;
+
+ for(let i=0;i<data.length;i++){
+
+  let x=(data[i]-128)/128;
+  sum+=x*x;
+
+ }
+
+ let rms=Math.sqrt(sum/data.length);
+
+ let level=20*Math.log10(
+  Math.max(rms,.00001)
+ );
+
+ let norm=Math.max(0,
+  Math.min(1,(level+60)/60)
+ );
+
+ let count=Math.round(norm*24);
+
+ let segs=$(id).children;
+
+ for(let i=0;i<24;i++){
+
+  segs[i].className="seg";
+
+  if(i<count){
+
+   segs[i].classList.add("on");
+
+   if(i>=22)
+    segs[i].classList.add("red");
+   else if(i>=19)
+    segs[i].classList.add("yellow");
+   else
+    segs[i].classList.add("green");
+
+  }
+
+ }
+
+ return level;
+}
+
+function meter(){
+
+ raf=requestAnimationFrame(meter);
+
+ if(!ctx||!nodes.aO)return;
+
+ noiseGate();
+
+ let l=meterValue(nodes.aL,"mL");
+ let r=meterValue(nodes.aR,"mR");
+ let o=meterValue(nodes.aO,"mO");
+
+ let peak=Math.max(l,r,o);
+
+ let st=$("status");
+
+ if(peak>=0){
+
+  st.textContent="🔴 CLIPPING — TURUNKAN GAIN";
+  st.className="status redText";
+
+ }else if(peak>-6){
+
+  st.textContent="🟡 WARNING — LEVEL TINGGI";
+  st.className="status yellowText";
+
+ }else{
+
+  st.textContent="🟢 SAFE";
+  st.className="status greenText";
+
+ }
+
+}
+
+$("mode").onchange=()=>{
+
+ let m=$("mode").value;
+
+ if(m==="mono"){
+
+  /*
+   Mono mode:
+   pan center.
+   Stereo input remains compatible
+   with low-cost browser processing.
+  */
+
+  $("pan").value=0;
+  $("pan").dispatchEvent(new Event("input"));
+
+  $("stemStatus").textContent="MONO L+R";
+
+ }else{
+
+  $("stemStatus").textContent="STEREO L/R";
+
+ }
+
+};
+
+document.querySelectorAll("[data-stem]").forEach(b=>{
+
+ b.onclick=()=>{
+
+  currentStem=b.dataset.stem;
+
+  let names={
+   L:"LEFT",
+   R:"RIGHT",
+   M:"CENTER / MID",
+   S:"SIDE"
+  };
+
+  $("stemStatus").textContent=
+   "MONITOR: "+names[currentStem];
+
+ };
+
+});
+
+/* WAV EXPORT */
+
+function wavBlob(buffer){
+
+ let ch=buffer.numberOfChannels;
+ let rate=buffer.sampleRate;
+ let frames=buffer.length;
+
+ let dataSize=frames*ch*2;
+ let out=new ArrayBuffer(44+dataSize);
+ let v=new DataView(out);
+
+ function str(o,s){
+  for(let i=0;i<s.length;i++)
+   v.setUint8(o+i,s.charCodeAt(i));
+ }
+
+ str(0,"RIFF");
+ v.setUint32(4,36+dataSize,true);
+ str(8,"WAVE");
+ str(12,"fmt ");
+ v.setUint32(16,16,true);
+ v.setUint16(20,1,true);
+ v.setUint16(22,ch,true);
+ v.setUint32(24,rate,true);
+ v.setUint32(28,rate*ch*2,true);
+ v.setUint16(32,ch*2,true);
+ v.setUint16(34,16,true);
+ str(36,"data");
+ v.setUint32(40,dataSize,true);
+
+ let pos=44;
+
+ for(let i=0;i<frames;i++){
+
+  for(let c=0;c<ch;c++){
+
+   let x=buffer.getChannelData(c)[i];
+
+   x=Math.max(-1,Math.min(1,x));
+
+   v.setInt16(
+    pos,
+    x<0?x*32768:x*32767,
+    true
+   );
+
+   pos+=2;
+
+  }
+
+ }
+
+ return new Blob([out],{type:"audio/wav"});
+}
+
+$("wav").onclick=async()=>{
+
+ let f=$("file").files[0];
+
+ if(!f){
+
+  $("status").textContent="PILIH FILE TERLEBIH DAHULU";
+  return;
+
+ }
+
+ try{
+
+  $("status").textContent="MEMPROSES WAV...";
+
+  let arr=await f.arrayBuffer();
+
+  let ac=new AudioContext();
+
+  let buffer=await ac.decodeAudioData(arr);
+
+  let off=new OfflineAudioContext(
+   2,
+   buffer.length,
+   buffer.sampleRate
+  );
+
+  let source=off.createBufferSource();
+  source.buffer=buffer;
+
+  let gain=off.createGain();
+  gain.gain.value=db(
+   parseFloat($("pre").value)
+  );
+
+  let pan=off.createStereoPanner();
+  pan.pan.value=parseFloat($("pan").value);
+
+  let fad=off.createGain();
+  fad.gain.value=db(
+   parseFloat($("fader").value)
+  );
+
+  source
+   .connect(gain)
+   .connect(pan)
+   .connect(fad)
+   .connect(off.destination);
+
+  source.start();
+
+  let rendered=await off.startRendering();
+
+  let blob=wavBlob(rendered);
+
+  let url=URL.createObjectURL(blob);
+
+  let a=document.createElement("a");
+  a.href=url;
+  a.download="FEEDER_LITE_OUTPUT.wav";
+  a.click();
+
+  setTimeout(()=>{
+   URL.revokeObjectURL(url);
+  },3000);
+
+  $("status").textContent="WAV SELESAI";
+
+ }catch(e){
+
+  $("status").textContent="GAGAL EXPORT WAV";
+
+ }
+
+};
+
+</script>
+</body>
+</html>
